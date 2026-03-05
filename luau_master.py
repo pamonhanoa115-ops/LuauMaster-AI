@@ -51,7 +51,7 @@ def index():
         pergunta = request.form['pergunta']
         try:
             # Usando o modelo flash estável
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-2.0-flash")
             response = model.generate_content(
                 f"Você é o LuauMaster AI. Gere um script de Roblox: {pergunta}"
             )
