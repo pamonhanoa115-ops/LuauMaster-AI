@@ -1,44 +1,74 @@
-from google import genai
 import os
+from flask import Flask, render_template_string, request
+import google.generativeai as genai
 
-CHAVE_API = "AIzaSyC_CFOZDIFufygft6PyLJfAeh043VK47u8"
-client = genai.Client(api_key=CHAVE_API)
+app = Flask(__name__)
 
-def chat_ia():
-    os.system('cls' if os.name == 'nt' else 'clear')
-    
-    # Criando uma sessão de chat com "Instrução de Sistema" (O DNA da IA)
-    # Aqui você "ensina" ela antes de começar!
-    chat = client.chats.create(
-        model="models/gemini-2.5-flash",
-        config={
-            "system_instruction": "Você é o instrutor oficial do site LuauMaster. Sua missão é ensinar Roblox Luau. Sempre lembre das preferências do usuário durante a conversa."
-        }
-    )
+# --- SEGURANÇA E CONFIGURAÇÃO ---
+# Pega a chave do "Environment" do Render para não vazar no GitHub
+api_key = os.environ.get("CHAVE_API")
+genai.configure(api_key=api_key)
 
-    print("==========================================")
-    print("   🧠 ASSISTENTE COM MEMÓRIA ATIVADA     ")
-    print("      (Ela vai lembrar do que você disser) ")
-    print("==========================================")
+# Configuração do "DNA" da IA (Instrução de Sistema)
+instrucao_sistema = (
+    "Você é o LuauMaster AI, instrutor oficial de Roblox Luau. "
+    "Sua missão é ensinar e gerar scripts de forma didática e eficiente."
+)
 
-    while True:
-        pergunta = input("\n👉 Você: ")
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction=instrucao_sistema
+)
 
-        if pergunta.lower() in ["sair", "exit", "quit"]:
-            break
+# Visual do site
+HTML = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>LuauMaster AI - Web</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #1a1a1a; color: #ffffff; display: flex; justify-content: center; padding: 20px; }
+        .container { background-color: #2d2d2d; padding: 30px; border-radius: 15px; width: 100%; max-width: 700px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { color: #00ffa3; text-align: center; }
+        input[type="text"] { width: 100%; padding: 15px; border-radius: 8px; border: none; background: #404040; color: white; margin-bottom: 10px; box-sizing: border-box;}
+        button { width: 100%; background-color: #00ffa3; color: #1a1a1a; border: none; padding: 15px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .chat-box { background: #111; padding: 20px; border-radius: 8px; margin-top: 20px; min-height: 100px; border-left: 5px solid #00ffa3; white-space: pre-wrap; }
+        .error { color: #ff4444; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 LuauMaster AI</h1>
+        <p style="text-align:center">O instrutor de Roblox na nuvem</p>
+        
+        <form method="POST">
+            <input type="text" name="pergunta" placeholder="O que vamos programar hoje?" required autofocus>
+            <button type="submit">GERAR RESPOSTA</button>
+        </form>
 
-        print("\n⏳ Processando...")
+        {% if resposta %}
+            <div class="chat-box">{{ resposta }}</div>
+        {% endif %}
+    </div>
+</body>
+</html>
+"""
 
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    resposta = None
+    if request.method == 'POST':
+        pergunta = request.form['pergunta']
         try:
-            # Agora usamos 'send_message' em vez de 'generate_content'
-            response = chat.send_message(pergunta)
-            
-            print("\n--- 🤖 IA ---")
-            print(response.text)
-            print("-" * 40)
-
+            # No plano Web simples, usamos o generate_content com a instrução de sistema já embutida
+            response = model.generate_content(pergunta)
+            resposta = response.text
         except Exception as e:
-            print(f"\n❌ Erro: {e}")
+            resposta = f"<span class='error'>❌ Erro: {e}</span>"
+    
+    return render_template_string(HTML, resposta=resposta)
 
-if __name__ == "__main__":
-    chat_ia()
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)

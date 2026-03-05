@@ -1,11 +1,13 @@
+import os
 from flask import Flask, render_template_string, request
-from google import genai
+import google.generativeai as genai
 
 app = Flask(__name__)
 
-# Configuração da sua IA
-CHAVE_API = "AIzaSyC_CFOZDIFufygft6PyLJfAeh043VK47u8"
-client = genai.Client(api_key=CHAVE_API)
+# --- CONFIGURAÇÃO SEGURA ---
+# O os.environ.get vai buscar a chave dentro do Render, mantendo-a escondida do GitHub
+CHAVE_API = os.environ.get("CHAVE_API")
+genai.configure(api_key=CHAVE_API)
 
 # O Visual do seu site (HTML + CSS)
 HTML = """
@@ -48,10 +50,10 @@ def index():
     if request.method == 'POST':
         pergunta = request.form['pergunta']
         try:
-            # Chama a IA usando o modelo que funcionou antes
-            response = client.models.generate_content(
-                model="models/gemini-2.5-flash",
-                contents=f"Você é o LuauMaster AI. Gere um script de Roblox: {pergunta}"
+            # Usando o modelo flash estável
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(
+                f"Você é o LuauMaster AI. Gere um script de Roblox: {pergunta}"
             )
             resposta = response.text
         except Exception as e:
@@ -60,4 +62,6 @@ def index():
     return render_template_string(HTML, resposta=resposta)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # No Render, ele usa uma porta automática, o código abaixo lida com isso
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
