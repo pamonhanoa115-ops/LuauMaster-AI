@@ -1,0 +1,1 @@
+web: gunicorn luau_master:app
