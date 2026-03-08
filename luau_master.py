@@ -17,7 +17,7 @@ instrucao_sistema = (
 
 # Inicializa o modelo
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
+    model_name="gemini-2.5-flash",
     system_instruction=instrucao_sistema
 )
 
