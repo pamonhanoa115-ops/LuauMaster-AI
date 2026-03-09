@@ -1,152 +1,288 @@
 import os
-from flask import Flask, render_template_string, request
+import base64
+from flask import Flask, render_template_string, request, jsonify
 import google.generativeai as genai
+from groq import Groq
 
+# Configuração do App
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO SEGURA ---
-# Busca a chave nas variáveis de ambiente do Render
-CHAVE_API = os.environ.get("CHAVE_API")
-genai.configure(api_key=CHAVE_API)
+# --- VARIÁVEIS DE AMBIENTE (RENDER) ---
+GEMINI_KEY = os.environ.get("CHAVE_API", "")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# Instrução de Sistema para manter a IA no personagem
-instrucao_sistema = (
-    "Você é o LuauMaster AI, instrutor oficial de Roblox Luau. "
-    "Sua missão é ensinar e gerar scripts de forma didática e eficiente."
-)
+# Inicialização do Gemini (Suporta Imagens/Visão)
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    # Modelo 1.5-flash é o melhor para visão e velocidade
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    gemini_model = None
 
-# Inicializa o modelo
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    system_instruction=instrucao_sistema
-)
+# Inicialização do Groq (Apenas Texto - Velocidade Extrema)
+groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 
-# --- INTERFACE PREMIUM (ESTILO NEXOLABS) ---
-HTML_PREMIUM = """
+# --- INTERFACE HTML/CSS/JS (ESTILO NEXOLABS) ---
+HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-pt">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LuauMaster Studio Premium</title>
+    <title>LuauMaster Studio | Cloud AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDK para Login Google -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; transition: background 0.3s; margin: 0; }
-        .dark-theme { --bg: #0f0f0f; --sidebar: #181818; --card: #1e1e1e; --text: #ffffff; --border: #2a2a2a; }
-        .light-theme { --bg: #f7f7f7; --sidebar: #ffffff; --card: #ffffff; --text: #1a1a1a; --border: #e2e8f0; }
-        .theme-container { background-color: var(--bg); color: var(--text); }
-        .sidebar { background-color: var(--sidebar); border-right: 1px solid var(--border); }
-        .card-input { background-color: var(--card); border: 1px solid var(--border); }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
-        .fade-in { animation: fadeIn 0.5s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        code-block { display: block; background: #000; padding: 15px; border-radius: 8px; color: #00ffa3; font-family: monospace; margin-top: 10px; border-left: 4px solid #00ffa3; overflow-x: auto; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
+        
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+            background: #050505; 
+            color: #eee; 
+            overflow: hidden; 
+        }
+
+        .glass { 
+            background: rgba(255, 255, 255, 0.02); 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            backdrop-filter: blur(20px); 
+        }
+
+        /* Estilo para Blocos de Código Luau */
+        code-block { 
+            display: block; 
+            background: #000; 
+            padding: 20px; 
+            border-radius: 12px; 
+            color: #00ffa3; 
+            font-family: 'Courier New', monospace; 
+            margin: 15px 0; 
+            border-left: 4px solid #00ffa3; 
+            overflow-x: auto; 
+            font-size: 0.9rem;
+        }
+
+        /* Scrollbar Personalizada */
+        .chat-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: #333 transparent;
+        }
+        .chat-scroll::-webkit-scrollbar { width: 5px; }
+        .chat-scroll::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+
+        .msg-user { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); align-self: flex-end; }
+        .msg-ai { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); align-self: flex-start; }
+
+        .loading-dot { width: 6px; height: 6px; background: #00ffa3; border-radius: 50%; animation: blink 1.4s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
     </style>
 </head>
-<body class="dark-theme theme-container h-screen flex overflow-hidden">
-    <!-- SIDEBAR -->
-    <aside class="sidebar w-64 flex-shrink-0 flex flex-col p-4 space-y-6">
-        <div class="flex items-center gap-3 px-2">
-            <div class="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-xs">LM</div>
-            <span class="font-bold text-lg tracking-tight">LuauMaster</span>
+<body class="flex h-screen w-full">
+
+    <!-- SIDEBAR (Histórico e Login) -->
+    <aside class="w-72 bg-[#0a0a0a] border-right border-white/5 flex flex-col hidden md:flex">
+        <div class="p-8 flex items-center gap-3">
+            <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center font-black shadow-lg shadow-blue-600/30">LM</div>
+            <div class="font-black text-xl tracking-tighter italic">LUAU<span class="text-blue-500">MASTER</span></div>
         </div>
-        <nav class="flex-1 space-y-1 overflow-y-auto">
-            <button onclick="window.location.href='/'" class="w-full flex items-center gap-3 p-2.5 hover:bg-white/5 rounded-lg transition-all text-sm">
-                <i class="fa-solid fa-plus opacity-70"></i> <span>New task</span>
+
+        <div class="flex-1 px-4 overflow-y-auto">
+            <button onclick="window.location.reload()" class="w-full py-3 glass rounded-xl text-sm font-bold flex items-center justify-center gap-2 mb-6 hover:bg-white/5 transition-all">
+                <i class="fa-solid fa-plus text-blue-500"></i> Novo Projeto
             </button>
-            <div class="pt-6">
-                <p class="text-[10px] font-bold text-gray-500 uppercase px-2 mb-2">Projects</p>
-                <div class="space-y-1">
-                    <div class="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer text-sm">
-                        <i class="fa-solid fa-folder text-blue-400"></i> <span>Roblox Studio</span>
-                    </div>
-                    <div class="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer text-sm">
-                        <i class="fa-solid fa-folder text-green-400"></i> <span>Modded Games</span>
-                    </div>
+            <div class="text-[10px] font-black text-gray-600 uppercase tracking-widest px-2 mb-2">Histórico Cloud</div>
+            <div id="history-list" class="space-y-2 text-sm text-gray-500 italic px-2">
+                Nenhum chat salvo...
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-white/5">
+            <div id="user-profile" class="glass p-3 rounded-2xl flex items-center gap-3">
+                <button onclick="loginGoogle()" id="btn-login" class="text-xs font-bold flex items-center gap-2">
+                    <i class="fa-brands fa-google text-red-500"></i> Entrar com Google
+                </button>
+                <div id="user-data" class="hidden flex items-center gap-3">
+                    <img id="user-pic" class="w-8 h-8 rounded-full border border-blue-500">
+                    <span id="user-name" class="text-[10px] font-bold truncate max-w-[100px]">User</span>
                 </div>
             </div>
-        </nav>
-        <div class="border-t border-white/5 pt-4 flex items-center justify-between">
-            <div class="flex gap-4 text-gray-400 text-sm px-2">
-                <i class="fa-solid fa-sun hover:text-white cursor-pointer" onclick="toggleTheme()"></i>
-                <i class="fa-solid fa-gear hover:text-white cursor-pointer"></i>
-            </div>
-            <i class="fa-solid fa-right-from-bracket text-gray-400 hover:text-white cursor-pointer"></i>
         </div>
     </aside>
 
-    <!-- MAIN CONTENT -->
-    <main class="flex-1 flex flex-col relative overflow-y-auto">
-        <header class="flex items-center justify-between p-4 px-6 sticky top-0 bg-transparent backdrop-blur-md z-10">
-            <div class="flex items-center gap-2 text-sm font-medium hover:bg-white/5 p-2 rounded-lg cursor-pointer">
-                <i class="fa-solid fa-robot text-blue-500"></i> LuauMaster 2.0 Flash <i class="fa-solid fa-chevron-down text-[10px]"></i>
+    <!-- ÁREA DE CHAT -->
+    <main class="flex-1 flex flex-col relative">
+        <header class="p-4 flex justify-between items-center glass border-b border-white/5 z-10">
+            <div class="flex items-center gap-4">
+                <div class="flex flex-col">
+                    <span class="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Servidor Online</span>
+                    <span class="text-xs font-bold">Kernel v2.5 Flash</span>
+                </div>
             </div>
-            <div class="w-8 h-8 rounded-full bg-red-900 border border-red-500 flex items-center justify-center text-[10px]">N</div>
+            <select id="engine" class="bg-black/50 text-[10px] font-black p-2 rounded-lg border border-white/10 outline-none">
+                <option value="gemini">Gemini (Vision Active)</option>
+                <option value="groq">Groq (Turbo Speed)</option>
+            </select>
         </header>
 
-        <div class="flex-1 flex flex-col items-center py-10 px-4 max-w-4xl mx-auto w-full">
-            {% if not resposta %}
-            <div class="text-center mb-10 fade-in pt-20">
-                <h1 class="text-5xl font-serif mb-6 opacity-90">What can I do for you?</h1>
+        <!-- CONTAINER DE MENSAGENS -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-6 md:p-12 space-y-8 chat-scroll">
+            <div class="max-w-2xl mx-auto text-center py-20 animate-pulse">
+                <h1 class="text-5xl font-black mb-4 tracking-tighter">O que vamos codar hoje?</h1>
+                <p class="text-gray-500">Manda um script, uma dúvida ou um print do teu Output.</p>
             </div>
-            {% endif %}
+        </div>
 
-            <form action="/" method="POST" class="w-full card-input rounded-2xl shadow-2xl overflow-hidden focus-within:ring-1 ring-blue-500 transition-all mb-8">
-                <textarea name="pergunta" class="w-full bg-transparent p-5 outline-none resize-none h-32 text-lg" placeholder="Descreva o script que você precisa..." required autofocus></textarea>
-                <div class="flex items-center justify-between p-3 border-t border-white/5 bg-black/10">
-                    <div class="flex items-center gap-4 text-gray-500 text-sm px-2">
-                        <i class="fa-solid fa-plus hover:text-white cursor-pointer"></i>
-                        <i class="fa-solid fa-globe hover:text-white cursor-pointer"></i>
+        <!-- INPUT FIXO EM BAIXO -->
+        <div class="p-6 md:p-10 w-full max-w-5xl mx-auto">
+            <div class="glass rounded-3xl p-2 relative shadow-2xl">
+                <!-- Preview de Imagem -->
+                <div id="img-preview-box" class="hidden p-3 flex">
+                    <div class="relative w-24 h-24 rounded-xl overflow-hidden border-2 border-emerald-500">
+                        <img id="preview-src" class="w-full h-full object-cover">
+                        <button onclick="cancelImage()" class="absolute top-1 right-1 bg-black/80 w-6 h-6 rounded-full text-xs">×</button>
                     </div>
-                    <button type="submit" class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center hover:bg-blue-500 transition-colors">
+                </div>
+
+                <div class="flex items-end gap-2 p-2">
+                    <label class="p-4 hover:bg-white/5 rounded-2xl cursor-pointer text-gray-500 transition-all">
+                        <i class="fa-solid fa-image"></i>
+                        <input type="file" id="file-input" class="hidden" accept="image/*" onchange="handleImage(this)">
+                    </label>
+                    <textarea id="prompt-input" class="flex-1 bg-transparent p-4 outline-none resize-none h-16 text-sm" placeholder="Escreve aqui o teu pedido..."></textarea>
+                    <button onclick="sendMsg()" class="w-14 h-14 bg-blue-600 hover:bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30 transition-all">
                         <i class="fa-solid fa-arrow-up text-white"></i>
                     </button>
                 </div>
-            </form>
-
-            {% if resposta %}
-            <div class="w-full fade-in pb-20">
-                <div class="p-6 rounded-xl bg-white/5 border border-white/10 text-sm leading-relaxed">
-                    <div class="prose prose-invert max-w-none">
-                        {{ resposta | safe }}
-                    </div>
-                </div>
-                <button onclick="window.location.href='/'" class="mt-6 text-blue-500 hover:underline text-sm">
-                    <i class="fa-solid fa-rotate-left mr-2"></i> Iniciar nova tarefa
-                </button>
             </div>
-            {% endif %}
+            <div class="text-center text-[9px] font-bold text-gray-700 mt-4 uppercase tracking-widest">Powered by Render Cloud & LuauMaster Kernel</div>
         </div>
     </main>
 
     <script>
-        function toggleTheme() {
-            const body = document.body;
-            body.classList.toggle('dark-theme');
-            body.classList.toggle('light-theme');
+        // --- Lógica de Interface ---
+        let base64Image = null;
+
+        function handleImage(input) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    base64Image = e.target.result.split(',')[1];
+                    document.getElementById('preview-src').src = e.target.result;
+                    document.getElementById('img-preview-box').classList.remove('hidden');
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        function cancelImage() {
+            base64Image = null;
+            document.getElementById('img-preview-box').classList.add('hidden');
+            document.getElementById('file-input').value = "";
+        }
+
+        async function sendMsg() {
+            const input = document.getElementById('prompt-input');
+            const chat = document.getElementById('chat-messages');
+            const text = input.value.trim();
+            const engine = document.getElementById('engine').value;
+
+            if(!text && !base64Image) return;
+
+            // Adicionar msg do utilizador
+            chat.innerHTML += `
+                <div class="flex flex-col items-end gap-2">
+                    <div class="msg-user p-5 rounded-3xl text-sm max-w-[80%] shadow-xl">${text}</div>
+                    ${base64Image ? '<span class="text-[9px] text-blue-500 font-bold uppercase tracking-widest">[Imagem Enviada]</span>' : ''}
+                </div>
+            `;
+            
+            input.value = "";
+            const loaderId = "loader-" + Date.now();
+            chat.innerHTML += `<div id="${loaderId}" class="flex items-center gap-2 p-4 text-[10px] text-emerald-500 font-bold tracking-widest"><div class="loading-dot"></div> PROCESSANDO COM ${engine.toUpperCase()}...</div>`;
+            chat.scrollTop = chat.scrollHeight;
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        prompt: text,
+                        image: base64Image,
+                        engine: engine
+                    })
+                });
+                
+                const data = await response.json();
+                document.getElementById(loaderId).remove();
+                cancelImage();
+
+                chat.innerHTML += `
+                    <div class="msg-ai p-8 rounded-3xl space-y-4 max-w-[95%] border-l-4 border-blue-600 shadow-2xl">
+                        <div class="text-[10px] font-black text-blue-500 uppercase tracking-widest">LuauMaster AI Response</div>
+                        <div class="text-gray-300 text-sm leading-relaxed">${data.response}</div>
+                    </div>
+                `;
+                chat.scrollTop = chat.scrollHeight;
+            } catch (err) {
+                document.getElementById(loaderId).innerText = "❌ ERRO AO LIGAR AO SERVIDOR.";
+            }
+        }
+
+        // --- Configuração Firebase (Opcional - Colar chaves se quiseres Login real) ---
+        function loginGoogle() {
+            alert("Configura as chaves do Firebase no código para ativar o Login Google!");
         }
     </script>
 </body>
 </html>
 """
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    resposta = None
-    if request.method == 'POST':
-        pergunta = request.form['pergunta']
-        try:
-            response = model.generate_content(pergunta)
-            # Formata blocos de código markdown para blocos visuais HTML
-            texto_formatado = response.text.replace('```lua', '<code-block>').replace('```', '</code-block>')
-            resposta = texto_formatado.replace('\n', '<br>')
-        except Exception as e:
-            resposta = f"<div style='color:#ff4444'>❌ Erro: {e}</div>"
-    
-    return render_template_string(HTML_PREMIUM, resposta=resposta)
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.json
+    user_prompt = data.get('prompt', '')
+    image_data = data.get('image')
+    engine = data.get('engine', 'gemini')
+
+    system_msg = "Você é o LuauMaster AI. Especialista em Roblox Luau. Regras: Use task.wait(), código limpo, e explique didaticamente. Se houver imagem, analise o código ou o erro nela."
+
+    try:
+        if engine == 'gemini' and gemini_model:
+            # Lógica de Visão e Texto
+            content = [f"{system_msg}\n\nPergunta: {user_prompt}"]
+            if image_data:
+                content.append({'mime_type': 'image/png', 'data': image_data})
+            
+            gen_res = gemini_model.generate_content(content)
+            final_text = gen_res.text
+        
+        elif engine == 'groq' and groq_client:
+            # Apenas Texto (Groq não suporta imagem diretamente neste setup)
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_prompt}]
+            )
+            final_text = completion.choices[0].message.content
+        else:
+            return jsonify({"response": "IA não configurada no Render."}), 500
+
+        # Formatação de Código para HTML
+        formatted = final_text.replace('```lua', '<code-block>').replace('```luau', '<code-block>').replace('```', '</code-block>')
+        formatted = formatted.replace('\n', '<br>')
+        
+        return jsonify({"response": formatted})
+
+    except Exception as e:
+        return jsonify({"response": f"<b style='color:red'>ERRO:</b> {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
