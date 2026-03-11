@@ -244,7 +244,7 @@ def chat():
                 contents.append(types.Part.from_bytes(data=base64.b64decode(image_data), mime_type="image/png"))
             
             # Usando modelo flash 2.0 que é o padrão atual do SDK para o que chamas de 2.5
-            response = client_gemini.models.generate_content(model="gemini-2.0-flash", contents=contents)
+            response = client_gemini.models.generate_content(model="gemini-2.5-flash", contents=contents)
             final_text = response.text
         
         elif engine == 'groq' and client_groq:
