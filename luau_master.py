@@ -1,7 +1,8 @@
 import os
 import base64
 from flask import Flask, render_template_string, request, jsonify
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from groq import Groq
 
 # Configuração do App
@@ -11,16 +12,20 @@ app = Flask(__name__)
 GEMINI_KEY = os.environ.get("CHAVE_API", "")
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# Inicialização do Gemini (Suporta Imagens/Visão)
+# Inicialização dos Clientes com o novo SDK do Google (Gemini 2.0+)
+client_gemini = None
 if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-    # Modelo 1.5-flash é o melhor para visão e velocidade
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    gemini_model = None
+    try:
+        client_gemini = genai.Client(api_key=GEMINI_KEY)
+    except Exception as e:
+        print(f"Erro ao carregar Gemini: {e}")
 
-# Inicialização do Groq (Apenas Texto - Velocidade Extrema)
-groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+client_groq = None
+if GROQ_KEY:
+    try:
+        client_groq = Groq(api_key=GROQ_KEY)
+    except Exception as e:
+        print(f"Erro ao carregar Groq: {e}")
 
 # --- INTERFACE HTML/CSS/JS (ESTILO NEXOLABS) ---
 HTML_TEMPLATE = """
@@ -33,10 +38,6 @@ HTML_TEMPLATE = """
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Firebase SDK para Login Google -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
-
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
         
@@ -53,7 +54,6 @@ HTML_TEMPLATE = """
             backdrop-filter: blur(20px); 
         }
 
-        /* Estilo para Blocos de Código Luau */
         code-block { 
             display: block; 
             background: #000; 
@@ -65,9 +65,9 @@ HTML_TEMPLATE = """
             border-left: 4px solid #00ffa3; 
             overflow-x: auto; 
             font-size: 0.9rem;
+            white-space: pre-wrap;
         }
 
-        /* Scrollbar Personalizada */
         .chat-scroll {
             scrollbar-width: thin;
             scrollbar-color: #333 transparent;
@@ -84,8 +84,7 @@ HTML_TEMPLATE = """
 </head>
 <body class="flex h-screen w-full">
 
-    <!-- SIDEBAR (Histórico e Login) -->
-    <aside class="w-72 bg-[#0a0a0a] border-right border-white/5 flex flex-col hidden md:flex">
+    <aside class="w-72 bg-[#0a0a0a] border-r border-white/5 flex flex-col hidden md:flex">
         <div class="p-8 flex items-center gap-3">
             <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center font-black shadow-lg shadow-blue-600/30">LM</div>
             <div class="font-black text-xl tracking-tighter italic">LUAU<span class="text-blue-500">MASTER</span></div>
@@ -95,32 +94,26 @@ HTML_TEMPLATE = """
             <button onclick="window.location.reload()" class="w-full py-3 glass rounded-xl text-sm font-bold flex items-center justify-center gap-2 mb-6 hover:bg-white/5 transition-all">
                 <i class="fa-solid fa-plus text-blue-500"></i> Novo Projeto
             </button>
-            <div class="text-[10px] font-black text-gray-600 uppercase tracking-widest px-2 mb-2">Histórico Cloud</div>
-            <div id="history-list" class="space-y-2 text-sm text-gray-500 italic px-2">
-                Nenhum chat salvo...
-            </div>
+            <div class="text-[10px] font-black text-gray-600 uppercase tracking-widest px-2 mb-2 text-center">Controle de Versão v2.5</div>
         </div>
 
         <div class="p-6 border-t border-white/5">
-            <div id="user-profile" class="glass p-3 rounded-2xl flex items-center gap-3">
-                <button onclick="loginGoogle()" id="btn-login" class="text-xs font-bold flex items-center gap-2">
-                    <i class="fa-brands fa-google text-red-500"></i> Entrar com Google
-                </button>
-                <div id="user-data" class="hidden flex items-center gap-3">
-                    <img id="user-pic" class="w-8 h-8 rounded-full border border-blue-500">
-                    <span id="user-name" class="text-[10px] font-bold truncate max-w-[100px]">User</span>
+            <div class="glass p-3 rounded-2xl flex flex-col items-center gap-2">
+                <span class="text-[9px] text-gray-500 uppercase font-bold">Status da Cloud</span>
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                    <span class="text-[10px] font-bold">Servidores Ativos</span>
                 </div>
             </div>
         </div>
     </aside>
 
-    <!-- ÁREA DE CHAT -->
     <main class="flex-1 flex flex-col relative">
         <header class="p-4 flex justify-between items-center glass border-b border-white/5 z-10">
             <div class="flex items-center gap-4">
                 <div class="flex flex-col">
-                    <span class="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Servidor Online</span>
-                    <span class="text-xs font-bold">Kernel v2.5 Flash</span>
+                    <span class="text-[10px] font-black text-emerald-500 uppercase tracking-widest">IA Conectada</span>
+                    <span class="text-xs font-bold">Kernel v2.0 Flash</span>
                 </div>
             </div>
             <select id="engine" class="bg-black/50 text-[10px] font-black p-2 rounded-lg border border-white/10 outline-none">
@@ -129,18 +122,15 @@ HTML_TEMPLATE = """
             </select>
         </header>
 
-        <!-- CONTAINER DE MENSAGENS -->
         <div id="chat-messages" class="flex-1 overflow-y-auto p-6 md:p-12 space-y-8 chat-scroll">
-            <div class="max-w-2xl mx-auto text-center py-20 animate-pulse">
+            <div class="max-w-2xl mx-auto text-center py-20">
                 <h1 class="text-5xl font-black mb-4 tracking-tighter">O que vamos codar hoje?</h1>
                 <p class="text-gray-500">Manda um script, uma dúvida ou um print do teu Output.</p>
             </div>
         </div>
 
-        <!-- INPUT FIXO EM BAIXO -->
         <div class="p-6 md:p-10 w-full max-w-5xl mx-auto">
             <div class="glass rounded-3xl p-2 relative shadow-2xl">
-                <!-- Preview de Imagem -->
                 <div id="img-preview-box" class="hidden p-3 flex">
                     <div class="relative w-24 h-24 rounded-xl overflow-hidden border-2 border-emerald-500">
                         <img id="preview-src" class="w-full h-full object-cover">
@@ -159,12 +149,10 @@ HTML_TEMPLATE = """
                     </button>
                 </div>
             </div>
-            <div class="text-center text-[9px] font-bold text-gray-700 mt-4 uppercase tracking-widest">Powered by Render Cloud & LuauMaster Kernel</div>
         </div>
     </main>
 
     <script>
-        // --- Lógica de Interface ---
         let base64Image = null;
 
         function handleImage(input) {
@@ -193,11 +181,9 @@ HTML_TEMPLATE = """
 
             if(!text && !base64Image) return;
 
-            // Adicionar msg do utilizador
             chat.innerHTML += `
                 <div class="flex flex-col items-end gap-2">
-                    <div class="msg-user p-5 rounded-3xl text-sm max-w-[80%] shadow-xl">${text}</div>
-                    ${base64Image ? '<span class="text-[9px] text-blue-500 font-bold uppercase tracking-widest">[Imagem Enviada]</span>' : ''}
+                    <div class="msg-user p-5 rounded-3xl text-sm max-w-[80%] shadow-xl">${text || "[Imagem para Análise]"}</div>
                 </div>
             `;
             
@@ -223,7 +209,7 @@ HTML_TEMPLATE = """
 
                 chat.innerHTML += `
                     <div class="msg-ai p-8 rounded-3xl space-y-4 max-w-[95%] border-l-4 border-blue-600 shadow-2xl">
-                        <div class="text-[10px] font-black text-blue-500 uppercase tracking-widest">LuauMaster AI Response</div>
+                        <div class="text-[10px] font-black text-blue-500 uppercase tracking-widest">LuauMaster Kernel Response</div>
                         <div class="text-gray-300 text-sm leading-relaxed">${data.response}</div>
                     </div>
                 `;
@@ -232,11 +218,7 @@ HTML_TEMPLATE = """
                 document.getElementById(loaderId).innerText = "❌ ERRO AO LIGAR AO SERVIDOR.";
             }
         }
-
-        // --- Configuração Firebase (Opcional - Colar chaves se quiseres Login real) ---
-        function loginGoogle() {
-            alert("Configura as chaves do Firebase no código para ativar o Login Google!");
-        }
+        document.getElementById('prompt-input').addEventListener('keypress', (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
     </script>
 </body>
 </html>
@@ -253,27 +235,26 @@ def chat():
     image_data = data.get('image')
     engine = data.get('engine', 'gemini')
 
-    system_msg = "Você é o LuauMaster AI. Especialista em Roblox Luau. Regras: Use task.wait(), código limpo, e explique didaticamente. Se houver imagem, analise o código ou o erro nela."
+    sys_prompt = "Você é o LuauMaster AI. Expert em Roblox Luau. Use task.wait(), explique scripts e erros."
 
     try:
-        if engine == 'gemini' and gemini_model:
-            # Lógica de Visão e Texto
-            content = [f"{system_msg}\n\nPergunta: {user_prompt}"]
+        if engine == 'gemini' and client_gemini:
+            contents = [f"{sys_prompt}\n\nUsuário: {user_prompt}"]
             if image_data:
-                content.append({'mime_type': 'image/png', 'data': image_data})
+                contents.append(types.Part.from_bytes(data=base64.b64decode(image_data), mime_type="image/png"))
             
-            gen_res = gemini_model.generate_content(content)
-            final_text = gen_res.text
+            # Usando modelo flash 2.0 que é o padrão atual do SDK para o que chamas de 2.5
+            response = client_gemini.models.generate_content(model="gemini-2.0-flash", contents=contents)
+            final_text = response.text
         
-        elif engine == 'groq' and groq_client:
-            # Apenas Texto (Groq não suporta imagem diretamente neste setup)
-            completion = groq_client.chat.completions.create(
+        elif engine == 'groq' and client_groq:
+            completion = client_groq.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_prompt}]
+                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}]
             )
             final_text = completion.choices[0].message.content
         else:
-            return jsonify({"response": "IA não configurada no Render."}), 500
+            return jsonify({"response": "⚠️ Motor de IA não configurado no Render."}), 500
 
         # Formatação de Código para HTML
         formatted = final_text.replace('```lua', '<code-block>').replace('```luau', '<code-block>').replace('```', '</code-block>')
@@ -282,7 +263,7 @@ def chat():
         return jsonify({"response": formatted})
 
     except Exception as e:
-        return jsonify({"response": f"<b style='color:red'>ERRO:</b> {str(e)}"}), 500
+        return jsonify({"response": f"<b style='color:red'>ERRO NO KERNEL:</b> {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
