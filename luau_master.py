@@ -58,7 +58,7 @@ def process_build(task_id, prompt, context_files):
 
         # Chamada ao modelo
         response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-09-2025",
+            model="gemini-2.5-flash",
             contents=[f"{SYSTEM_PROMPT}\n\n{full_input}"],
             config=types.GenerateContentConfig(
                 max_output_tokens=8192,
