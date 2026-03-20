@@ -45,7 +45,7 @@ def process_build(task_id, prompt, context_files=None):
         full_input = f"PEDIDO DE MAPA/SISTEMA: {prompt}\n\nARQUIVOS ENVIADOS: {json.dumps(context_files) if context_files else 'Nenhum'}"
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-09-2025",
+            model="gemini-2.5-flash",
             contents=[f"{SYSTEM_PROMPT}\n\n{full_input}"],
             config=types.GenerateContentConfig(
                 max_output_tokens=8192,
